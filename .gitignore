@@ -1,0 +1,7 @@
+# Student data and model outputs must never be committed
+data/
+artifacts/
+# Local tooling
+.superpowers/
+__pycache__/
+*.pyc

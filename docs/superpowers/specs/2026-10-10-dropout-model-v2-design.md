@@ -3,7 +3,7 @@
 | Item | Value |
 |---|---|
 | Date | 2026-10-10 |
-| Status | Draft for review |
+| Status | Approved 2026-10-10 (with change: class 10 excluded) |
 | Source table | `aiml_usecase_curated.final_student_dropout_info_new` (load_date 2026-10-08) |
 | Decision | Option A — quarterly early warning |
 | Deadline | Demo to officials on Monday 2026-10-12 |
@@ -14,7 +14,7 @@
 ## 1. Understanding
 
 **What the user said**
-- Build the dropout model for classes 1–10 of AP Government schools, for production use.
+- Build the dropout model for AP Government schools, for production use. **Model scope: classes 1–9. Class 10 is excluded** (user decision 2026-10-10), because its next-year outcome mixes ITI, polytechnic and SSC results that the table does not have.
 - Use option A: risk lists that refresh during the year as attendance arrives.
 - The data team needs more than one week for the staging-table changes. The model must be built now, with all data refinement done in code, without changing the source table.
 - The code runs on the offline server; the user runs it and reports results. No new packages.
@@ -28,7 +28,7 @@
 1. One command extracts data, one trains, one scores; all run on the server without edits.
 2. No feature uses information from after its snapshot date (enforced by an automated test).
 3. Metrics are measured on a later year than training (2025-26), with confidence intervals, overall and for students still attending.
-4. Live scores for every 2026-27 student in classes 1–10, with tier, district rank, and top-3 reasons.
+4. Live scores for every 2026-27 student in classes 1–9, with tier, district rank, and top-3 reasons.
 5. The user can do a quick end-to-end dry run on a 2% sample before the full run.
 
 ---
@@ -56,7 +56,7 @@
 
 The audit showed that the source system keeps students in the table after they leave. "No row next year" finds only 0.09–0.64% of students for recent years. So the label uses **evidence of attendance in the next year**.
 
-For a base row (student *p*, academic year *T*, class 1–10):
+For a base row (student *p*, academic year *T*, class 1–9):
 
 | Case (checked in this order) | Label | `label_reason` |
 |---|---|---|
@@ -70,13 +70,13 @@ Definitions:
 - **Matched row:** a *T+1* row with the same `person_id`; or, when that row has no attendance, a *T+1* row with the same `student_id` as the base row. The `student_id` match rescues children whose `person_id` changed (68,088 such `student_id` values in the audit).
 - **Label window:** months of *T+1* that count as evidence. Default `["jun", "jul"]`, because 2026-27 has only June and July loaded. The same window is used for every year, so all labels mean the same thing. When August–September 2026 arrive, the window can grow in config.
 - **School reports attendance:** at least 50% of that school's *T+1* rows have working days > 0 in the label window.
-- **Class 11+ rule:** class 11/12 rows come from junior colleges, whose attendance coverage is unknown. A class 11+ row counts as continuation.
+- **Class 11+ rule:** class 11/12 rows come from junior colleges, whose attendance coverage is unknown. A class 11+ row counts as continuation (rare for classes 1–9; kept for safety).
 
-Known noise that stays (documented in the report): transfers to schools outside the table, migration out of AP, and class 10 students who join ITI/polytechnic count as dropouts.
+Known noise that stays (documented in the report): transfers to schools outside the table and migration out of AP count as dropouts.
 
 ### 3.2 Base population and exclusions
 
-A base row is a de-duplicated student-year row with class 1–10. Excluded:
+A base row is a de-duplicated student-year row with class 1–9 (class 10 excluded). Excluded:
 1. `person_id` that is empty or not numeric.
 2. **Placeholder IDs:** a `person_id` with more than 3 rows in one year (the 127,571-row ID in 2024-25). All rows of that ID in that year are excluded.
 3. Students with `is_deceased = "Deceased"` (any row). "reported deceased" is kept, because 96.8% of those students still attend.
@@ -124,9 +124,10 @@ A snapshot is the point in year *T* when the risk list is made. A snapshot model
 ### 3.6 Tiers and outputs
 
 Engagement status is computed for every live student from the visible months:
-- `ATTENDING`: attended at least 1 day.
-- `NOT_ATTENDING`: the school reports attendance, but the student has none.
-- `NO_SCHOOL_DATA`: the school does not report attendance.
+- `ATTENDING`: attended at least 1 day in the **latest visible month**.
+- `NOT_ATTENDING`: no attendance in the latest visible month, while the school reports attendance for that month.
+  (Amended 2026-10-10 during implementation: "not seen this month" is the list field staff act on.)
+- `NO_SCHOOL_DATA`: the school does not report attendance for the latest visible month.
 - `UNKNOWN`: the `start` snapshot, which has no current-year data.
 
 Risk tiers are given among students who are `ATTENDING` or `UNKNOWN`. Cut-offs by statewide rank (configurable):
@@ -146,7 +147,7 @@ Risk tiers are given among students who are `ATTENDING` or `UNKNOWN`. Cut-offs b
 | IDs with leading zeros / mixed types | `person_key` = int64 of the digits of `person_id` (used for joins); the original string is kept for output. `student_id`, `school_id` → int64. |
 | Duplicate rows per student-year | Keep one main row: most attended days in the year; ties → higher class → higher `school_id`. Monthly attendance = maximum per month across the student's rows. Keep `n_rows_in_year`. |
 | Placeholder `person_id` | Excluded (3.2). |
-| Class codes −3..0, 13 | Keep −3..12 for history and labels. Drop 0 and 13. Base rows are 1–10. |
+| Class codes −3..0, 13 | Keep −3..12 for history and labels (class 10 rows are needed as next-year rows of class 9). Drop 0 and 13. Base rows are 1–9. |
 | `student_age` is today's age | Not used. Age on 1 June of *T* comes from the date of birth. Ages < 3 or > 25 → missing. `over_age = age − (class + 5)`. |
 | `highest_qualification`, `is_dropout`, `dropout_reason` | Never extracted as features. `is_dropout` is extracted only for a comparison table in the report. |
 | Snapshot columns that change after a dropout (marital status, members count, siblings, health, `child_status`) | Not used. |
@@ -334,7 +335,7 @@ Estimated full-data times on 16 cores (to be confirmed on the server):
 
 ## 11. Known limitations (stated in the model report)
 
-1. The label is a proxy. It counts transfers out of the table, migration out of AP, and ITI/polytechnic joiners after class 10 as dropouts.
+1. The label is a proxy. It counts transfers out of the table and migration out of AP as dropouts. Class 10 has no risk score in this version.
 2. Test-year labels use only June–July 2026.
 3. The evaluation model has one training year (2023-24), because 2022-23 labels are unreliable.
 4. Slow-changing household and school values are current snapshots, so there is a small leakage risk.
